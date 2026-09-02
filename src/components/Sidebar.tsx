@@ -2,6 +2,8 @@ import { NavLink } from 'react-router-dom'
 import { LayoutDashboard, TrendingDown, TrendingUp, GanttChartSquare, CalendarDays, Settings, LogOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
+import { useProfiles } from '@/hooks/useProfiles'
+import { UserAvatar } from '@/components/UserAvatar'
 
 const NAV_ITEMS = [
   { to: '/', icon: LayoutDashboard, label: 'Kanban' },
@@ -14,12 +16,15 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   const { user, signOut } = useAuth()
+  const { members, byId } = useProfiles()
+  const me = user ? byId.get(user.id) : undefined
+  const others = members.filter(m => m.id !== user?.id)
 
   return (
     <aside className="w-56 shrink-0 border-r border-border bg-white flex flex-col min-h-screen">
       <div className="px-5 py-5 border-b border-border">
         <h1 className="text-base font-semibold text-foreground tracking-tight">Project Manager</h1>
-        <p className="text-xs text-muted-foreground mt-0.5">Gestion de projet perso</p>
+        <p className="text-xs text-muted-foreground mt-0.5">Espace partagé</p>
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-1">
@@ -44,9 +49,21 @@ export function Sidebar() {
       </nav>
 
       <div className="px-4 py-3 border-t border-border">
-        <p className="text-xs text-muted-foreground truncate mb-2" title={user?.email}>
-          {user?.email}
-        </p>
+        {others.length > 0 && (
+          <div className="flex items-center gap-1.5 mb-2.5" title={`Équipe : ${members.map(m => m.displayName).join(', ')}`}>
+            {others.map(m => <UserAvatar key={m.id} member={m} size="xs" />)}
+            <span className="text-[11px] text-muted-foreground truncate">
+              {others.map(m => m.displayName).join(', ')}
+            </span>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 mb-2 min-w-0">
+          <UserAvatar member={me} />
+          <p className="text-xs text-muted-foreground truncate" title={user?.email}>
+            {me?.displayName ?? user?.email}
+          </p>
+        </div>
         <button
           onClick={() => { void signOut() }}
           className="flex items-center gap-2 text-xs text-muted-foreground hover:text-red-500 transition-colors w-full"

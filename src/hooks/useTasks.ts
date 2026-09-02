@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useId } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { Task, TaskInsert, TaskUpdate } from '@/types/database'
 
@@ -6,6 +6,7 @@ export function useTasks() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const channelId = useId()
 
   const fetchTasks = useCallback(async () => {
     setLoading(true)
@@ -25,6 +26,33 @@ export function useTasks() {
   useEffect(() => {
     void fetchTasks()
   }, [fetchTasks])
+
+  // Synchro temps réel : le tableau est partagé, les modifications de l'autre
+  // membre doivent arriver sans rechargement. Le nom du canal est unique par
+  // instance du hook — deux pages montées en même temps sinon se marchent dessus.
+  useEffect(() => {
+    const channel = supabase
+      .channel(`tasks-sync-${channelId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tasks' },
+        payload => {
+          if (payload.eventType === 'INSERT') {
+            const row = payload.new as Task
+            setTasks(prev => (prev.some(t => t.id === row.id) ? prev : [row, ...prev]))
+          } else if (payload.eventType === 'UPDATE') {
+            const row = payload.new as Task
+            setTasks(prev => prev.map(t => (t.id === row.id ? row : t)))
+          } else if (payload.eventType === 'DELETE') {
+            const { id } = payload.old as { id?: string }
+            if (id) setTasks(prev => prev.filter(t => t.id !== id))
+          }
+        }
+      )
+      .subscribe()
+
+    return () => { void supabase.removeChannel(channel) }
+  }, [channelId])
 
   const createTask = async (task: TaskInsert) => {
     const { data: { session } } = await supabase.auth.getSession()

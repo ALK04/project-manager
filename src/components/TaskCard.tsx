@@ -4,7 +4,9 @@ import { CSS } from '@dnd-kit/utilities'
 import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { Pencil, Trash2, Calendar, Clock, GripVertical, CheckCircle2, ChevronUp, ChevronDown } from 'lucide-react'
-import type { Task, Priority, Status } from '@/types/database'
+import type { Task, Priority, TaskFormData } from '@/types/database'
+import { useProfiles } from '@/hooks/useProfiles'
+import { UserAvatar } from '@/components/UserAvatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -21,12 +23,14 @@ interface TaskCardProps {
   task: Task
   onMoveUp?: () => void
   onMoveDown?: () => void
-  onUpdate: (id: string, updates: { title: string; priority: Priority; status: Status; due_date: string | null; completed_at: string | null }) => Promise<void>
+  onUpdate: (id: string, updates: TaskFormData) => Promise<void>
   onDelete: (id: string) => Promise<void>
 }
 
 export function TaskCard({ task, onMoveUp, onMoveDown, onUpdate, onDelete }: TaskCardProps) {
   const [editOpen, setEditOpen] = useState(false)
+  const { byId } = useProfiles()
+  const assignee = task.assignee_id ? byId.get(task.assignee_id) : undefined
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id })
 
   const style = {
@@ -35,7 +39,7 @@ export function TaskCard({ task, onMoveUp, onMoveDown, onUpdate, onDelete }: Tas
     opacity: isDragging ? 0.4 : 1,
   }
 
-  const handleUpdate = async (data: { title: string; priority: Priority; status: Status; due_date: string | null; completed_at: string | null }) => {
+  const handleUpdate = async (data: TaskFormData) => {
     await onUpdate(task.id, data)
     setEditOpen(false)
   }
@@ -86,6 +90,7 @@ export function TaskCard({ task, onMoveUp, onMoveDown, onUpdate, onDelete }: Tas
             <p className="text-sm font-medium text-foreground leading-snug break-words">{task.title}</p>
 
             <div className="flex items-center gap-2 mt-2 flex-wrap">
+              <UserAvatar member={assignee} />
               <Badge variant={task.priority}>{PRIORITY_LABELS[task.priority]}</Badge>
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Clock className="h-3 w-3" />

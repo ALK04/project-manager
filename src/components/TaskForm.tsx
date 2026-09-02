@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { format } from 'date-fns'
-import type { Task, Priority, Status } from '@/types/database'
+import type { Task, Priority, Status, TaskFormData } from '@/types/database'
+import { useAuth } from '@/hooks/useAuth'
+import { useProfiles } from '@/hooks/useProfiles'
+import { UserAvatar } from '@/components/UserAvatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -9,7 +12,7 @@ import { DialogFooter } from '@/components/ui/dialog'
 
 interface TaskFormProps {
   initialTask?: Partial<Task>
-  onSubmit: (data: { title: string; priority: Priority; status: Status; due_date: string | null; completed_at: string | null }) => Promise<void>
+  onSubmit: (data: TaskFormData) => Promise<void>
   onCancel: () => void
 }
 
@@ -27,11 +30,22 @@ const STATUS_OPTIONS: { value: Status; label: string }[] = [
   { value: 'done', label: 'Terminé' },
 ]
 
+// Radix Select refuse la valeur vide : sentinelle pour « personne ».
+const UNASSIGNED = 'none'
+
 export function TaskForm({ initialTask, onSubmit, onCancel }: TaskFormProps) {
+  const { user } = useAuth()
+  const { members } = useProfiles()
+  const isEdit = Boolean(initialTask?.id)
+
   const [title, setTitle] = useState(initialTask?.title ?? '')
   const [priority, setPriority] = useState<Priority>(initialTask?.priority ?? 'should')
   const [status, setStatus] = useState<Status>(initialTask?.status ?? 'todo')
   const [dueDate, setDueDate] = useState(initialTask?.due_date ?? '')
+  // À la création, la tâche est pré-assignée à soi-même — le cas le plus courant.
+  const [assigneeId, setAssigneeId] = useState<string>(
+    initialTask?.assignee_id ?? (isEdit ? UNASSIGNED : (user?.id ?? UNASSIGNED))
+  )
   const [completedAt, setCompletedAt] = useState(
     initialTask?.completed_at ? format(new Date(initialTask.completed_at), 'yyyy-MM-dd') : ''
   )
@@ -40,6 +54,8 @@ export function TaskForm({ initialTask, onSubmit, onCancel }: TaskFormProps) {
   const createdDate = initialTask?.created_at
     ? format(new Date(initialTask.created_at), 'yyyy-MM-dd')
     : format(new Date(), 'yyyy-MM-dd')
+
+  const selectedMember = members.find(m => m.id === assigneeId)
 
   const handleStatusChange = (v: Status) => {
     setStatus(v)
@@ -59,6 +75,7 @@ export function TaskForm({ initialTask, onSubmit, onCancel }: TaskFormProps) {
         status,
         due_date: dueDate || null,
         completed_at: status === 'done' ? (completedAt || null) : null,
+        assignee_id: assigneeId === UNASSIGNED ? null : assigneeId,
       })
     } finally {
       setLoading(false)
@@ -77,6 +94,38 @@ export function TaskForm({ initialTask, onSubmit, onCancel }: TaskFormProps) {
           required
           autoFocus
         />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>Assignée à</Label>
+        <Select value={assigneeId} onValueChange={setAssigneeId}>
+          <SelectTrigger>
+            <SelectValue>
+              <span className="flex items-center gap-2">
+                <UserAvatar member={selectedMember} />
+                {selectedMember
+                  ? `${selectedMember.displayName}${selectedMember.id === user?.id ? ' (moi)' : ''}`
+                  : 'Non assignée'}
+              </span>
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={UNASSIGNED}>
+              <span className="flex items-center gap-2">
+                <UserAvatar />
+                Non assignée
+              </span>
+            </SelectItem>
+            {members.map(m => (
+              <SelectItem key={m.id} value={m.id}>
+                <span className="flex items-center gap-2">
+                  <UserAvatar member={m} />
+                  {m.displayName}{m.id === user?.id ? ' (moi)' : ''}
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="grid grid-cols-2 gap-4">

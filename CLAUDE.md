@@ -24,22 +24,35 @@ Single-page React app (React 19 + TypeScript + Tailwind CSS v4 + Vite). Backend 
 ### Data layer
 
 **`src/hooks/useTasks.ts`** — single source of truth for all task data. Fetches from Supabase on mount, exposes `tasks`, `createTask`, `updateTask`, `deleteTask`, `bulkCreateTasks`. Critical behaviour in `updateTask`: if `completed_at` is **not** present in the update payload, it auto-sets `completed_at = now()` when `status → 'done'` and clears it when status changes away from done. If `completed_at` **is** explicitly in the payload, it is used as-is (allows manual date editing).
+Le hook ouvre aussi un canal Realtime Supabase (`postgres_changes` sur `tasks`, nom de canal dérivé de `useId()` pour que deux instances montées ne se marchent pas dessus) : les modifications de l'autre membre arrivent sans rechargement. Les mutations locales mettent déjà l'état à jour, l'événement reçu en retour est donc dédoublonné par id.
 
-**`src/types/database.ts`** — canonical types. `Task` has: `id`, `title`, `priority` (`must|should|could|wont`), `status` (`todo|in_progress|blocked|done`), `due_date` (date string `yyyy-MM-dd` or null), `completed_at` (ISO datetime or null), `created_at` (ISO datetime).
+**`src/types/database.ts`** — canonical types. `Task` has: `id`, `title`, `priority` (`must|should|could|wont`), `status` (`todo|in_progress|blocked|done`), `due_date` (date string `yyyy-MM-dd` or null), `completed_at` (ISO datetime or null), `started_at`, `assignee_id` (uuid du membre à qui la tâche est assignée, ou null), `created_at` (ISO datetime). `TaskFormData` est la charge utile partagée par tous les formulaires de tâche (TaskForm → TaskCard/KanbanColumn → KanbanPage) : ne pas la redéclarer en ligne.
 
 **`src/lib/supabase.ts`** — Supabase client, reads `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` from env.
 
+**`src/hooks/useProfiles.ts`** — liste des membres de l'espace (table `profiles` : `display_name`, `color`). Le store est **au niveau module** (`useSyncExternalStore`) et non par composant : plusieurs pages consultent les membres en même temps, une seule requête suffit. Expose `members`, `byId`, `updateProfile` (RLS : chacun ne modifie que le sien) et `refresh`.
+
 **`src/hooks/useSettings.ts`** — localStorage-only (key `pm_settings`). Only setting is `projectEndDate` used by the Burndown chart.
+
+### Comptes et partage
+
+L'espace est **partagé entre les comptes connectés** : `tasks` et `absences` ont une policy RLS `for all to authenticated using (true)`, tout le monde voit et modifie le même tableau. Seul `alternance_days` reste strictement personnel (`auth.uid() = user_id`).
+
+- `supabase/SQL Editor/Espace partage a deux.sql` — idempotent : table `profiles`, backfill des comptes existants, trigger `on_auth_user_created`, colonne `tasks.assignee_id` (`on delete set null` : supprimer un compte ne supprime pas ses tâches), remplacement des anciennes policies (celles ouvertes à `anon` **et** celles par compte, `auth.uid() = user_id`, devenues des doublons permissifs), ajout de `tasks` à la publication `supabase_realtime`.
+- **L'inscription est fermée dans l'app** (pas de formulaire signup) : un compte se crée dans Supabase → Authentication → Users → Add user. Le trigger `on_auth_user_created` crée le profil (nom déduit de l'email, couleur piochée dans la palette de `default_profile_color()` — à garder en phase avec `AVATAR_COLORS` dans SettingsPage) **et** la ligne `user_settings` : le `create or replace` du script écrase la version installée par le setup des tâches, les deux insertions doivent donc rester groupées dans la même fonction. Elle est `security definer` **avec `search_path` figé** et chaque insertion est enveloppée dans son propre bloc `exception` : un trigger qui échoue sur `auth.users` fait échouer la création du compte elle-même (« Database error creating new user »). `revoke all on function handle_new_user()` la retire au passage de `/rest/v1/rpc/` — PostgREST expose toute fonction de `public`. Le script se termine par un `select` qui liste les triggers de `auth.users` — un intrus y est le suspect n° 1.
+- Comptes existants : `admin@pm.local` et `enzo@pm.local`.
+- `UserAvatar` (`src/components/UserAvatar.tsx`) rend les initiales sur la couleur du membre, ou un rond pointillé si la tâche n'est assignée à personne. Tailles `xs` / `sm` / `md`.
+- `useSettings` (date de fin de projet) reste en localStorage, donc **par navigateur** et non partagé.
 
 ### Pages
 
-**KanbanPage** (`/`) — orchestrates dnd-kit drag-and-drop. Uses `pointerWithin` collision detection + `onDragOver` to track `overColumnStatus` for immediate column highlight (avoids the latency of `closestCenter`). Manages per-column sort (`pm_kanban_sort`) and manual card order (`pm_kanban_orders`) in localStorage. `tasksByStatus` is a `useMemo` that applies `sortColumnTasks()` to each column's tasks. `moveCard` reorders within a column and switches to `'manual'` sort mode. Props flow: KanbanPage → KanbanColumn → TaskCard.
+**KanbanPage** (`/`) — orchestrates dnd-kit drag-and-drop. Uses `pointerWithin` collision detection + `onDragOver` to track `overColumnStatus` for immediate column highlight (avoids the latency of `closestCenter`). Manages per-column sort (`pm_kanban_sort`) and manual card order (`pm_kanban_orders`) in localStorage. Un filtre par personne (`pm_kanban_assignee` : `all` | `unassigned` | id de membre) produit `visibleTasks` ; `tasksByStatus` est un `useMemo` qui applique `sortColumnTasks()` aux tâches **visibles** de chaque colonne. `tasks` reste complet partout ailleurs — la synchro de l'ordre manuel et `moveCard` réinsèrent la carte dans l'ordre **complet** de la colonne, sinon un filtre actif effacerait la position des cartes masquées ; `moveCard` bascule aussi le tri en `'manual'`. Props flow: KanbanPage → KanbanColumn → TaskCard.
 
 **KanbanColumn** — droppable zone (`useDroppable`), ref covers the **entire column div** so the drop target includes the header. Receives sorted tasks from parent; computes `onMoveUp`/`onMoveDown` per-card based on index.
 
 **TaskCard** — draggable (`useSortable`). Shows ↑/grip/↓ stack on hover (left side). Edit dialog opens `TaskForm`.
 
-**TaskForm** — shared create/edit form. Shows "Terminé le" date field only when `status === 'done'`; auto-fills it with today when status switches to done. `onSubmit` signature includes `completed_at`.
+**TaskForm** — shared create/edit form. Shows "Terminé le" date field only when `status === 'done'`; auto-fills it with today when status switches to done. `onSubmit` reçoit un `TaskFormData` (donc `completed_at` **et** `assignee_id`). Le sélecteur « Assignée à » utilise la sentinelle `'none'` (Radix Select refuse la valeur vide) ; à la création la tâche est pré-assignée au compte courant, à l'édition elle garde son assignation.
 
 **GanttPage** (`/gantt`) — custom canvas-free Gantt using absolutely positioned divs within a scrollable container. Two independent drag systems using global `mousemove`/`mouseup` listeners via refs (to avoid stale closures):
   - **Planned bar drag** (always active): drags right edge → updates `due_date` via `updateTask({ due_date })` only (no `status` passed, preventing `completed_at` from being overwritten).
@@ -58,7 +71,7 @@ Single-page React app (React 19 + TypeScript + Tailwind CSS v4 + Vite). Backend 
   - Peinture au clic **et au glisser** (`onPointerDown` + `onPointerEnter` avec un ref `painting`, relâché par un listener `pointerup` global).
   - `src/lib/alternancePdf.ts` — export PDF vectoriel via jsPDF (A4 paysage, 4 mois par ligne, 12 mois par page), dessiné en primitives (pas de rastérisation : html2canvas ne gère pas les couleurs `oklch` de Tailwind v4). jsPDF est en `import()` dynamique pour rester hors du bundle initial. Couleurs RGB dans `DAY_TYPE_PDF`, à garder en phase avec `DAY_TYPE_CELL`. `buildAlternancePdf()` renvoie le document sans le télécharger — c'est ce qui permet de le générer hors navigateur pour vérifier la mise en page (`npx esbuild src/lib/alternancePdf.ts --bundle --format=esm --platform=node --alias:@=./src --external:jspdf`, puis `doc.output('arraybuffer')`). Toute la géométrie est dérivée des constantes en haut du fichier : changer `CELL_H` ou `HEADER_H` recale tout, mais vérifier que la 3ᵉ ligne de mois reste au-dessus du trait de pied de page.
 
-**SettingsPage** (`/settings`) — two tabs: project end date, and Trello JSON import. Trello import decodes card creation date from the first 8 hex chars of the Trello card ID.
+**SettingsPage** (`/settings`) — onglets Général (date de fin de projet), Équipe (profil perso : nom affiché + couleur d'avatar ; liste des membres et de leur charge), Absences, Importer Trello, Diagnostic. Trello import decodes card creation date from the first 8 hex chars of the Trello card ID.
 
 ### UI components
 
@@ -71,6 +84,7 @@ Single-page React app (React 19 + TypeScript + Tailwind CSS v4 + Vite). Backend 
 | `pm_settings` | `{ projectEndDate: string }` |
 | `pm_column_order` | `Status[]` — column left-to-right order |
 | `pm_kanban_sort` | `KanbanSortMode` string |
+| `pm_kanban_assignee` | `'all' \| 'unassigned' \| <uuid membre>` — filtre par personne |
 | `pm_kanban_orders` | `Record<Status, string[]>` — manual card IDs per column |
 | `pm_gantt_sort` | `SortMode` string |
 | `pm_gantt_order` | `string[]` — manual task IDs |

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { Plus, ChevronLeft, ChevronRight } from 'lucide-react'
-import type { Task, Priority, Status } from '@/types/database'
+import type { Task, Status, TaskFormData } from '@/types/database'
 import { TaskCard } from '@/components/TaskCard'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -24,8 +24,8 @@ interface KanbanColumnProps {
   onMoveLeft: () => void
   onMoveRight: () => void
   onMoveCard: (taskId: string, direction: -1 | 1) => void
-  onCreateTask: (data: { title: string; priority: Priority; status: Status; due_date: string | null; completed_at: string | null }) => Promise<void>
-  onUpdateTask: (id: string, updates: { title: string; priority: Priority; status: Status; due_date: string | null; completed_at: string | null }) => Promise<void>
+  onCreateTask: (data: TaskFormData) => Promise<void>
+  onUpdateTask: (id: string, updates: TaskFormData) => Promise<void>
   onDeleteTask: (id: string) => Promise<void>
 }
 
@@ -38,7 +38,7 @@ export function KanbanColumn({
   const config = COLUMN_CONFIG[status]
   const { setNodeRef } = useDroppable({ id: status })
 
-  const handleCreate = async (data: { title: string; priority: Priority; status: Status; due_date: string | null; completed_at: string | null }) => {
+  const handleCreate = async (data: TaskFormData) => {
     await onCreateTask({ ...data, status })
     setCreateOpen(false)
   }

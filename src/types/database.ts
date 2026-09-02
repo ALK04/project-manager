@@ -15,6 +15,7 @@ export type Task = {
   due_date: string | null
   completed_at: string | null
   started_at: string | null
+  assignee_id: string | null
   created_at: string
 }
 
@@ -26,6 +27,7 @@ export type TaskInsert = {
   created_at?: string
   completed_at?: string | null
   started_at?: string | null
+  assignee_id?: string | null
 }
 
 export type TaskUpdate = {
@@ -35,7 +37,18 @@ export type TaskUpdate = {
   due_date?: string | null
   completed_at?: string | null
   started_at?: string | null
+  assignee_id?: string | null
   created_at?: string
+}
+
+// Profil public d'un compte : nom affiché + couleur d'avatar.
+// Lisible par tous les membres, modifiable uniquement par son propriétaire.
+export type ProfileRow = {
+  id: string
+  display_name: string
+  color: string
+  created_at: string
+  updated_at: string
 }
 
 // DB-facing row type for absences (snake_case matches Supabase columns)
@@ -64,6 +77,12 @@ export interface Database {
         Row: AlternanceDayRow
         Insert: Omit<AlternanceDayRow, 'updated_at'> & { updated_at?: string }
         Update: Partial<AlternanceDayRow>
+        Relationships: []
+      }
+      profiles: {
+        Row: ProfileRow
+        Insert: Omit<ProfileRow, 'created_at' | 'updated_at'> & { created_at?: string; updated_at?: string }
+        Update: Partial<Omit<ProfileRow, 'id'>>
         Relationships: []
       }
       tasks: {
@@ -99,4 +118,14 @@ export interface AbsencePeriod {
   startDate: string  // yyyy-MM-dd
   endDate: string    // yyyy-MM-dd
   color: string      // hex e.g. "#f97316"
+}
+
+// Charge utile commune aux formulaires de tâche (création et édition).
+export interface TaskFormData {
+  title: string
+  priority: Priority
+  status: Status
+  due_date: string | null
+  completed_at: string | null
+  assignee_id: string | null
 }

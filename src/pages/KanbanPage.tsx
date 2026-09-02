@@ -10,8 +10,11 @@ import {
   type DragEndEvent,
   type DragOverEvent,
 } from '@dnd-kit/core'
-import type { Task, Status, Priority } from '@/types/database'
+import type { Task, Status, Priority, TaskFormData } from '@/types/database'
 import { useTasks } from '@/hooks/useTasks'
+import { useAuth } from '@/hooks/useAuth'
+import { useProfiles } from '@/hooks/useProfiles'
+import { UserAvatar } from '@/components/UserAvatar'
 import { KanbanColumn } from '@/components/KanbanColumn'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -35,6 +38,10 @@ const SORT_OPTIONS: { value: KanbanSortMode; label: string }[] = [
 ]
 
 const PRIORITY_ORDER: Record<Priority, number> = { must: 0, should: 1, could: 2, wont: 3 }
+
+// Filtre par personne : 'all', 'unassigned' ou l'id d'un membre.
+const ASSIGNEE_ALL = 'all'
+const ASSIGNEE_NONE = 'unassigned'
 
 type ColumnOrders = Record<Status, string[]>
 
@@ -99,6 +106,11 @@ function sortColumnTasks(tasks: Task[], mode: KanbanSortMode, manualOrder: strin
 
 export function KanbanPage() {
   const { tasks, loading, error, createTask, updateTask, deleteTask } = useTasks()
+  const { user } = useAuth()
+  const { members } = useProfiles()
+  const [assigneeFilter, setAssigneeFilter] = useState<string>(() =>
+    localStorage.getItem('pm_kanban_assignee') ?? ASSIGNEE_ALL
+  )
   const [activeTask, setActiveTask] = useState<Task | null>(null)
   const [columnOrder, setColumnOrder] = useState<Status[]>(loadColumnOrder)
   const [overColumnStatus, setOverColumnStatus] = useState<Status | null>(null)
@@ -139,15 +151,23 @@ export function KanbanPage() {
     }
   }, [tasks])
 
+  // Le filtre ne s'applique qu'à l'affichage : `tasks` reste complet pour la
+  // synchro de l'ordre manuel et la résolution des cartes glissées.
+  const visibleTasks = useMemo(() => {
+    if (assigneeFilter === ASSIGNEE_ALL) return tasks
+    if (assigneeFilter === ASSIGNEE_NONE) return tasks.filter(t => !t.assignee_id)
+    return tasks.filter(t => t.assignee_id === assigneeFilter)
+  }, [tasks, assigneeFilter])
+
   const tasksByStatus = useMemo<Record<Status, Task[]>>(
     () => ALL_STATUSES.reduce(
       (acc, col) => ({
         ...acc,
-        [col]: sortColumnTasks(tasks.filter(t => t.status === col), sortMode, manualOrders[col]),
+        [col]: sortColumnTasks(visibleTasks.filter(t => t.status === col), sortMode, manualOrders[col]),
       }),
       { todo: [], in_progress: [], blocked: [], done: [] } as Record<Status, Task[]>
     ),
-    [tasks, sortMode, manualOrders]
+    [visibleTasks, sortMode, manualOrders]
   )
 
   const moveColumn = (status: Status, direction: -1 | 1) => {
@@ -161,19 +181,32 @@ export function KanbanPage() {
   }
 
   const moveCard = useCallback((taskId: string, status: Status, direction: -1 | 1) => {
-    const colTasks = tasksByStatus[status]
-    const currentIds = colTasks.map(t => t.id)
-    const idx = currentIds.indexOf(taskId)
-    const newIdx = idx + direction
-    if (newIdx < 0 || newIdx >= currentIds.length) return
-    const newOrder = [...currentIds]
-    ;[newOrder[idx], newOrder[newIdx]] = [newOrder[newIdx], newOrder[idx]]
+    // La carte échange sa place avec la voisine *visible*, mais l'ordre
+    // enregistré porte sur toute la colonne : sinon un filtre par personne
+    // effacerait la position des cartes masquées.
+    const visibleIds = tasksByStatus[status].map(t => t.id)
+    const idx = visibleIds.indexOf(taskId)
+    if (idx < 0) return
+    const neighbourId = visibleIds[idx + direction]
+    if (neighbourId === undefined) return
+
+    const fullIds = sortColumnTasks(
+      tasks.filter(t => t.status === status),
+      sortMode,
+      manualOrdersRef.current[status]
+    ).map(t => t.id)
+
+    const rest = fullIds.filter(id => id !== taskId)
+    const target = rest.indexOf(neighbourId)
+    const insertAt = direction === -1 ? target : target + 1
+    const newOrder = [...rest.slice(0, insertAt), taskId, ...rest.slice(insertAt)]
+
     const newOrders = { ...manualOrdersRef.current, [status]: newOrder }
     setManualOrders(newOrders)
     setSortMode('manual')
     localStorage.setItem('pm_kanban_sort', 'manual')
     saveKanbanOrders(newOrders)
-  }, [tasksByStatus])
+  }, [tasksByStatus, tasks, sortMode])
 
   const handleDragStart = (event: DragStartEvent) => {
     const task = tasks.find(t => t.id === event.active.id)
@@ -215,11 +248,11 @@ export function KanbanPage() {
     }
   }
 
-  const handleCreate = async (data: { title: string; priority: Priority; status: Status; due_date: string | null; completed_at: string | null }) => {
+  const handleCreate = async (data: TaskFormData) => {
     await createTask(data)
   }
 
-  const handleUpdate = async (id: string, updates: { title: string; priority: Priority; status: Status; due_date: string | null; completed_at: string | null }) => {
+  const handleUpdate = async (id: string, updates: TaskFormData) => {
     await updateTask(id, updates)
   }
 
@@ -250,12 +283,38 @@ export function KanbanPage() {
           <div>
             <h2 className="text-xl font-semibold">Tableau Kanban</h2>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {tasks.length} tâche{tasks.length !== 1 ? 's' : ''} au total
+              {visibleTasks.length} tâche{visibleTasks.length !== 1 ? 's' : ''}
+              {assigneeFilter !== ASSIGNEE_ALL && ` sur ${tasks.length}`}
             </p>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground whitespace-nowrap">Trier par</span>
+            <span className="text-xs text-muted-foreground whitespace-nowrap">Assignée à</span>
+            <Select
+              value={assigneeFilter}
+              onValueChange={v => {
+                setAssigneeFilter(v)
+                localStorage.setItem('pm_kanban_assignee', v)
+              }}
+            >
+              <SelectTrigger className="h-8 w-[150px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ASSIGNEE_ALL} className="text-xs">Tout le monde</SelectItem>
+                {members.map(m => (
+                  <SelectItem key={m.id} value={m.id} className="text-xs">
+                    <span className="flex items-center gap-2">
+                      <UserAvatar member={m} size="xs" />
+                      {m.displayName}{m.id === user?.id ? ' (moi)' : ''}
+                    </span>
+                  </SelectItem>
+                ))}
+                <SelectItem value={ASSIGNEE_NONE} className="text-xs">Non assignées</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <span className="text-xs text-muted-foreground whitespace-nowrap ml-2">Trier par</span>
             <Select
               value={sortMode}
               onValueChange={v => {

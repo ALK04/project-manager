@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 
 export function LoginPage() {
   const { signIn } = useAuth()
-  const [email, setEmail] = useState('admin@pm.local')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -36,7 +36,7 @@ export function LoginPage() {
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              placeholder="admin@pm.local"
+              placeholder="prenom@exemple.com"
               autoComplete="email"
               required
             />

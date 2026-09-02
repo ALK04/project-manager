@@ -16,6 +16,8 @@ import { fr } from 'date-fns/locale'
 import { ZoomIn, ZoomOut, ChevronUp, ChevronDown, Pencil, Eye, EyeOff } from 'lucide-react'
 import type { Task, Priority, Status } from '@/types/database'
 import { useTasks } from '@/hooks/useTasks'
+import { useProfiles } from '@/hooks/useProfiles'
+import { UserAvatar } from '@/components/UserAvatar'
 import { useAbsences } from '@/hooks/useAbsences'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -91,6 +93,7 @@ interface StartedAtDragState { taskId: string; originalDateStr: string;  startPa
 
 export function GanttPage() {
   const { tasks, loading, updateTask } = useTasks()
+  const { byId: membersById } = useProfiles()
   const { absences } = useAbsences()
 
   const [absDropdownOpen,    setAbsDropdownOpen]    = useState(false)
@@ -862,7 +865,11 @@ export function GanttPage() {
                     <p className="text-sm font-medium truncate leading-snug" title={task.title}>
                       {task.title}
                     </p>
-                    <div className="mt-1.5">
+                    <div className="mt-1.5 flex items-center gap-1.5">
+                      <UserAvatar
+                        member={task.assignee_id ? membersById.get(task.assignee_id) : undefined}
+                        size="xs"
+                      />
                       <Badge variant={task.priority} className="text-[10px] px-1.5 py-0">
                         {PRIORITY_LABELS[task.priority]}
                       </Badge>

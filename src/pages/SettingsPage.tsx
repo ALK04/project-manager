@@ -1,8 +1,11 @@
 import { useState, useRef, useMemo } from 'react'
 import { format, parseISO, startOfDay } from 'date-fns'
 import { fr } from 'date-fns/locale'
-import { FileJson, AlertCircle, CheckCircle2, ShieldCheck, Pencil, X, Check, Trash2, Plus } from 'lucide-react'
+import { FileJson, AlertCircle, CheckCircle2, ShieldCheck, Pencil, X, Check, Trash2, Plus, Users } from 'lucide-react'
 import { useSettings } from '@/hooks/useSettings'
+import { useAuth } from '@/hooks/useAuth'
+import { useProfiles } from '@/hooks/useProfiles'
+import { UserAvatar } from '@/components/UserAvatar'
 import { useAbsences } from '@/hooks/useAbsences'
 import { useTasks } from '@/hooks/useTasks'
 import { Button } from '@/components/ui/button'
@@ -148,14 +151,19 @@ function computeIssues(tasks: Task[]): DiagnosticIssue[] {
 const QUICK_LABELS = ['Alternance', 'Vacances', 'Maladie', 'Férié', 'Formation']
 const COLOR_PRESETS = ['#f97316', '#ef4444', '#3b82f6', '#22c55e', '#a855f7', '#94a3b8']
 
+// Palette des avatars : reprend celle de default_profile_color() cote SQL.
+const AVATAR_COLORS = ['#6366f1', '#f97316', '#10b981', '#ec4899', '#0ea5e9', '#a855f7']
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
-type Tab = 'settings' | 'absences' | 'import' | 'diagnostic'
+type Tab = 'settings' | 'team' | 'absences' | 'import' | 'diagnostic'
 
 export function SettingsPage() {
   const { settings, updateSettings } = useSettings()
   const { absences, addAbsence, removeAbsence } = useAbsences()
   const { tasks, bulkCreateTasks, updateTask } = useTasks()
+  const { user } = useAuth()
+  const { members, updateProfile } = useProfiles()
 
   // — Settings tab —
   const [tab, setTab]         = useState<Tab>('settings')
@@ -167,6 +175,14 @@ export function SettingsPage() {
   const [absStart, setAbsStart] = useState('')
   const [absEnd, setAbsEnd]     = useState('')
   const [absColor, setAbsColor] = useState(COLOR_PRESETS[0])
+
+  // — Team tab —
+  const me = members.find(m => m.id === user?.id)
+  const [nameDraft, setNameDraft]   = useState<string | null>(null)
+  const [colorDraft, setColorDraft] = useState<string | null>(null)
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileSaved, setProfileSaved]   = useState(false)
+  const [profileError, setProfileError]   = useState<string | null>(null)
 
   // — Import tab —
   const [rows, setRows]               = useState<ImportRow[]>([])
@@ -196,6 +212,26 @@ export function SettingsPage() {
     setAbsLabel('')
     setAbsStart('')
     setAbsEnd('')
+  }
+
+  const handleSaveProfile = async () => {
+    if (!user || !me) return
+    const display_name = (nameDraft ?? me.displayName).trim()
+    const color = colorDraft ?? me.color
+    if (!display_name) return
+    setProfileSaving(true)
+    setProfileError(null)
+    try {
+      await updateProfile(user.id, { display_name, color })
+      setNameDraft(null)
+      setColorDraft(null)
+      setProfileSaved(true)
+      setTimeout(() => setProfileSaved(false), 2000)
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : 'Erreur inconnue')
+    } finally {
+      setProfileSaving(false)
+    }
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -267,11 +303,14 @@ export function SettingsPage() {
     }
   }
 
+  const unassignedCount = tasks.filter(t => !t.assignee_id).length
+
   const criticalCount = issues.filter(i => i.severity === 'critical').length
   const warningCount  = issues.filter(i => i.severity === 'warning').length
 
   const TAB_LABELS: Record<Tab, string> = {
     settings: 'Général',
+    team: `Équipe${members.length > 0 ? ` (${members.length})` : ''}`,
     absences: `Absences${absences.length > 0 ? ` (${absences.length})` : ''}`,
     import: 'Importer Trello',
     diagnostic: 'Diagnostic',
@@ -286,7 +325,7 @@ export function SettingsPage() {
       </div>
 
       <div className="px-6 border-b border-border flex shrink-0">
-        {(['settings', 'absences', 'import', 'diagnostic'] as Tab[]).map(t => (
+        {(['settings', 'team', 'absences', 'import', 'diagnostic'] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -345,6 +384,138 @@ export function SettingsPage() {
               <div className="rounded-xl border border-border bg-white p-5 space-y-2 text-sm text-muted-foreground">
                 <p>Stack : React · TypeScript · Tailwind CSS · Supabase · Recharts</p>
                 <p>Drag &amp; drop : @dnd-kit</p>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {/* ── TEAM TAB ── */}
+        {tab === 'team' && (
+          <div className="p-6 max-w-lg space-y-8">
+            <section className="space-y-4">
+              <div>
+                <h3 className="text-base font-semibold">Mon profil</h3>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Le nom et la couleur affichés sur les cartes qui te sont assignées.
+                </p>
+              </div>
+
+              {me ? (
+                <div className="rounded-xl border border-border bg-white p-5 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <UserAvatar
+                      member={{ ...me, displayName: nameDraft ?? me.displayName, color: colorDraft ?? me.color }}
+                      size="md"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{nameDraft ?? me.displayName}</p>
+                      <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="display_name">Nom affiché</Label>
+                    <Input
+                      id="display_name"
+                      value={nameDraft ?? me.displayName}
+                      onChange={e => setNameDraft(e.target.value)}
+                      placeholder="Ton prénom"
+                      maxLength={40}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Couleur de l'avatar</Label>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {AVATAR_COLORS.map(c => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => setColorDraft(c)}
+                          className="w-7 h-7 rounded-full border-2 transition-all"
+                          style={{
+                            backgroundColor: c,
+                            borderColor: (colorDraft ?? me.color) === c ? '#1e293b' : 'transparent',
+                            boxShadow: (colorDraft ?? me.color) === c ? '0 0 0 1px #fff inset' : undefined,
+                          }}
+                          title={c}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  {profileError && (
+                    <p className="text-sm text-destructive">{profileError}</p>
+                  )}
+
+                  <Button
+                    onClick={() => { void handleSaveProfile() }}
+                    disabled={profileSaving || (nameDraft === null && colorDraft === null) || !(nameDraft ?? me.displayName).trim()}
+                  >
+                    {profileSaving ? 'Enregistrement…' : profileSaved ? 'Enregistré ✓' : 'Enregistrer'}
+                  </Button>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-border bg-white p-6 text-sm text-muted-foreground">
+                  Profil introuvable — lance le script SQL
+                  {' '}<code className="text-xs">Espace partage a deux.sql</code>{' '}
+                  dans Supabase pour le créer.
+                </div>
+              )}
+            </section>
+
+            <section className="space-y-4">
+              <div>
+                <h3 className="text-base font-semibold">Membres</h3>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  Les tâches, les absences et les statistiques sont partagées entre ces comptes.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {members.map(m => {
+                  const count = tasks.filter(t => t.assignee_id === m.id).length
+                  const openCount = tasks.filter(t => t.assignee_id === m.id && t.status !== 'done').length
+                  return (
+                    <div key={m.id} className="flex items-center gap-3 rounded-xl border border-border bg-white px-4 py-3">
+                      <UserAvatar member={m} size="md" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {m.displayName}
+                          {m.id === user?.id && <span className="text-muted-foreground font-normal"> (moi)</span>}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {count} tâche{count !== 1 ? 's' : ''} assignée{count !== 1 ? 's' : ''}
+                          {count > 0 && ` · ${openCount} en cours`}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })}
+                {unassignedCount > 0 && (
+                  <div className="flex items-center gap-3 rounded-xl border border-dashed border-border bg-white px-4 py-3">
+                    <UserAvatar size="md" />
+                    <p className="text-sm text-muted-foreground">
+                      {unassignedCount} tâche{unassignedCount !== 1 ? 's' : ''} non assignée{unassignedCount !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-border bg-slate-50 p-5 space-y-2 text-sm text-muted-foreground">
+                <p className="flex items-center gap-2 font-medium text-foreground">
+                  <Users className="h-4 w-4" />
+                  Ajouter quelqu'un
+                </p>
+                <p>
+                  L'inscription est volontairement fermée dans l'app. Pour ouvrir un compte :
+                  Supabase → <strong>Authentication</strong> → <strong>Users</strong> → <strong>Add user</strong>,
+                  en cochant « Auto Confirm User ».
+                </p>
+                <p>
+                  Le profil (nom + couleur) est créé automatiquement ; la personne peut le
+                  renommer ici après sa première connexion.
+                </p>
               </div>
             </section>
           </div>
