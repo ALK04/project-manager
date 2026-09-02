@@ -6,9 +6,12 @@ import {
   format,
   parseISO,
   eachDayOfInterval,
+  eachMonthOfInterval,
+  startOfMonth,
   isBefore,
   isAfter,
   isToday,
+  isValid,
   getISOWeek,
   getISOWeekYear,
 } from 'date-fns'
@@ -19,6 +22,7 @@ import { useTasks } from '@/hooks/useTasks'
 import { useProfiles } from '@/hooks/useProfiles'
 import { UserAvatar } from '@/components/UserAvatar'
 import { useAbsences } from '@/hooks/useAbsences'
+import { useSettings } from '@/hooks/useSettings'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -51,6 +55,17 @@ function zoomLabel(px: ZoomPx): string {
 function isDayWeekend(d: Date): boolean {
   const day = d.getDay()
   return day === 0 || day === 6
+}
+
+/** Dernier jour où la tâche « occupe » le diagramme (fin de barre planifiée ou réelle). */
+function taskEndDate(task: Task, today: Date): Date {
+  const dates = [startOfDay(parseISO(task.created_at))]
+  if (task.due_date)     dates.push(startOfDay(parseISO(task.due_date)))
+  if (task.completed_at) dates.push(startOfDay(parseISO(task.completed_at)))
+  if (task.started_at)   dates.push(startOfDay(parseISO(task.started_at)))
+  // Une tâche non terminée court jusqu'à aujourd'hui : elle reste visible.
+  if (task.status !== 'done') dates.push(today)
+  return dates.reduce((a, b) => (a > b ? a : b))
 }
 
 const PRIORITY_LABELS: Record<Priority, string> = {
@@ -95,6 +110,13 @@ export function GanttPage() {
   const { tasks, loading, updateTask } = useTasks()
   const { byId: membersById } = useProfiles()
   const { absences } = useAbsences()
+  const { settings } = useSettings()
+
+  /** Date de fin de projet (Paramètres), si elle est exploitable — elle étend l'axe. */
+  const projectEnd = useMemo(() => {
+    const d = startOfDay(parseISO(settings.projectEndDate))
+    return isValid(d) ? d : null
+  }, [settings.projectEndDate])
 
   const [absDropdownOpen,    setAbsDropdownOpen]    = useState(false)
   const [absDropdownPos,     setAbsDropdownPos]     = useState<{ top: number; left: number } | null>(null)
@@ -124,6 +146,10 @@ export function GanttPage() {
   )
   const [hideWeekends, setHideWeekends] = useState(() =>
     localStorage.getItem('pm_gantt_hide_weekends') === 'true'
+  )
+  // 'all' | 'yyyy-MM' — début de l'axe temporel, les tâches finies avant sont masquées
+  const [startMonth, setStartMonth] = useState<string>(() =>
+    localStorage.getItem('pm_gantt_start_month') ?? 'all'
   )
 
   const scrollRef           = useRef<HTMLDivElement>(null)
@@ -165,7 +191,44 @@ export function GanttPage() {
     }
   }, [tasks])
 
-  const sortedTasks = useMemo(() => {
+  // ── Filtre « à partir du mois » ───────────────────────────────────────────
+  /** Premier jour affiché quand un mois est sélectionné, sinon null. */
+  const cutoff = useMemo(
+    () => (startMonth === 'all' ? null : startOfMonth(parseISO(`${startMonth}-01`))),
+    [startMonth]
+  )
+
+  /** Mois proposés : de la plus ancienne date connue à la fin de projet. */
+  const monthOptions = useMemo(() => {
+    const dates: Date[] = [startOfDay(new Date())]
+    if (projectEnd) dates.push(projectEnd)
+    for (const t of tasks) {
+      dates.push(parseISO(t.created_at))
+      if (t.due_date)     dates.push(parseISO(t.due_date))
+      if (t.completed_at) dates.push(parseISO(t.completed_at))
+      if (t.started_at)   dates.push(parseISO(t.started_at))
+    }
+    const min = startOfMonth(dates.reduce((a, b) => (a < b ? a : b)))
+    const max = startOfMonth(dates.reduce((a, b) => (a > b ? a : b)))
+    const months = eachMonthOfInterval({ start: min, end: max })
+    // Garde le mois sélectionné dans la liste même si plus aucune tâche ne le couvre.
+    if (cutoff && !months.some(m => format(m, 'yyyy-MM') === startMonth)) {
+      months.push(cutoff)
+      months.sort((a, b) => a.getTime() - b.getTime())
+    }
+    return months.map(m => ({ value: format(m, 'yyyy-MM'), label: format(m, 'MMMM yyyy', { locale: fr }) }))
+  }, [tasks, cutoff, startMonth, projectEnd])
+
+  /** Tâches conservées : celles qui s'étendent encore au-delà du mois choisi. */
+  const visibleTasks = useMemo(() => {
+    if (!cutoff) return tasks
+    const today = startOfDay(new Date())
+    return tasks.filter(t => !isBefore(taskEndDate(t, today), cutoff))
+  }, [tasks, cutoff])
+
+  const hiddenCount = tasks.length - visibleTasks.length
+
+  const sortedAllTasks = useMemo(() => {
     if (sortMode === 'manual') {
       const taskMap = new Map(tasks.map(t => [t.id, t]))
       return manualOrder.map(id => taskMap.get(id)).filter(Boolean) as Task[]
@@ -192,6 +255,12 @@ export function GanttPage() {
     }
   }, [tasks, sortMode, manualOrder])
 
+  const sortedTasks = useMemo(() => {
+    if (!cutoff) return sortedAllTasks
+    const visibleIds = new Set(visibleTasks.map(t => t.id))
+    return sortedAllTasks.filter(t => visibleIds.has(t.id))
+  }, [sortedAllTasks, visibleTasks, cutoff])
+
   // Restore scroll
   useEffect(() => {
     if (loading || scrollRestoredRef.current) return
@@ -215,16 +284,20 @@ export function GanttPage() {
   }, [])
 
   const moveTask = useCallback((taskId: string, direction: -1 | 1) => {
-    const currentIds = sortedTasks.map(t => t.id)
-    const idx = currentIds.indexOf(taskId)
-    const newIdx = idx + direction
-    if (newIdx < 0 || newIdx >= currentIds.length) return
-    const newOrder = [...currentIds]
-    ;[newOrder[idx], newOrder[newIdx]] = [newOrder[newIdx], newOrder[idx]]
+    // Le voisin est cherché dans la liste *visible*, mais l'échange se fait dans
+    // l'ordre *complet* : sinon un filtre actif effacerait les tâches masquées.
+    const visibleIdx = sortedTasks.findIndex(t => t.id === taskId)
+    const neighbour  = sortedTasks[visibleIdx + direction]
+    if (visibleIdx === -1 || !neighbour) return
+    const newOrder = sortedAllTasks.map(t => t.id)
+    const from = newOrder.indexOf(taskId)
+    const to   = newOrder.indexOf(neighbour.id)
+    if (from === -1 || to === -1) return
+    ;[newOrder[from], newOrder[to]] = [newOrder[to], newOrder[from]]
     setManualOrder(newOrder)
     setSortMode('manual')
     saveGanttOrder(newOrder)
-  }, [sortedTasks])
+  }, [sortedTasks, sortedAllTasks])
 
   const zoomOut = () => {
     const idx = ZOOM_STEPS.indexOf(pxPerDay)
@@ -238,13 +311,21 @@ export function GanttPage() {
   // ── Time range ────────────────────────────────────────────────────────────
   const { rangeStart, days } = useMemo(() => {
     const today = startOfDay(new Date())
-    if (!tasks.length) {
-      const start = addDays(today, -7)
-      const end   = addDays(today, 30)
+    const build = (rawStart: Date, rawEnd: Date) => {
+      // Le mois choisi prime sur la date de début calculée.
+      const start = cutoff ?? rawStart
+      // Toujours au moins deux semaines à l'écran (mois choisi dans le futur).
+      const end   = isAfter(addDays(start, 14), rawEnd) ? addDays(start, 14) : rawEnd
       return { rangeStart: start, days: eachDayOfInterval({ start, end }) }
     }
+    if (!visibleTasks.length) {
+      const emptyEnd = addDays(today, 30)
+      return build(addDays(today, -7), projectEnd && isAfter(projectEnd, emptyEnd) ? projectEnd : emptyEnd)
+    }
     const allDates: Date[] = [today]
-    for (const t of tasks) {
+    // La date de fin de projet (Paramètres) tire l'axe jusqu'à elle, même sans tâche là-bas.
+    if (projectEnd) allDates.push(projectEnd)
+    for (const t of visibleTasks) {
       allDates.push(parseISO(t.created_at))
       if (t.due_date)     allDates.push(parseISO(t.due_date))
       if (t.completed_at) allDates.push(parseISO(t.completed_at))
@@ -252,10 +333,8 @@ export function GanttPage() {
     }
     const minDate = allDates.reduce((a, b) => (a < b ? a : b))
     const maxDate = allDates.reduce((a, b) => (a > b ? a : b))
-    const start   = startOfDay(addDays(minDate, -3))
-    const end     = startOfDay(addDays(maxDate, 8))
-    return { rangeStart: start, days: eachDayOfInterval({ start, end }) }
-  }, [tasks])
+    return build(startOfDay(addDays(minDate, -3)), startOfDay(addDays(maxDate, 8)))
+  }, [visibleTasks, cutoff, projectEnd])
 
   // ── Visible days (weekends filtered when needed) ──────────────────────────
   const visibleDays = useMemo(() => {
@@ -292,6 +371,36 @@ export function GanttPage() {
     (a: Date, b: Date) => Math.max(pxPerDay * 0.3, xForDate(b) - xForDate(a)),
     [xForDate, pxPerDay]
   )
+
+  /** Une barre qui démarre avant le mois choisi est coupée au bord gauche. */
+  const clampToRange = useCallback(
+    (d: Date) => (isBefore(startOfDay(d), rangeStart) ? rangeStart : d),
+    [rangeStart]
+  )
+  const isClipped = useCallback(
+    (d: Date) => isBefore(startOfDay(d), rangeStart),
+    [rangeStart]
+  )
+
+  /**
+   * Grille de fond d'une ligne, en dégradés répétés plutôt qu'un div par jour :
+   * l'axe peut couvrir plusieurs années, un div/jour/tâche ferait des dizaines
+   * de milliers de nœuds. Les deux motifs sont réguliers (1 jour / 7 jours).
+   */
+  const rowGridStyle = useMemo(() => {
+    const lines = `repeating-linear-gradient(to right, rgba(148,163,184,0.25) 0 1px, transparent 1px ${pxPerDay}px)`
+    if (hideWeekends) {
+      return { backgroundImage: lines, backgroundPosition: '0 0' }
+    }
+    // Le motif week-end s'ancre sur le premier samedi ; il se répète aussi vers
+    // la gauche, donc un dimanche en tête de plage est correctement grisé.
+    const firstSaturday = visibleDays.findIndex(d => d.getDay() === 6)
+    const weekends = `repeating-linear-gradient(to right, rgba(148,163,184,0.12) 0 ${2 * pxPerDay}px, transparent ${2 * pxPerDay}px ${7 * pxPerDay}px)`
+    return {
+      backgroundImage: `${weekends}, ${lines}`,
+      backgroundPosition: `${(firstSaturday < 0 ? 0 : firstSaturday) * pxPerDay}px 0, 0 0`,
+    }
+  }, [pxPerDay, hideWeekends, visibleDays])
 
   const totalWidth = visibleDays.length * pxPerDay
   const headerH    = timeScale === 'weeks+days' ? 84 : 56
@@ -482,6 +591,10 @@ export function GanttPage() {
 
   const today  = new Date()
   const todayX = xForDate(today)
+  // Le mois choisi peut être dans le futur : le repère « aujourd'hui » sort alors de la plage.
+  const showTodayMarker = visibleDays.length > 0
+    && !isBefore(startOfDay(today), rangeStart)
+    && !isAfter(startOfDay(today), visibleDays[visibleDays.length - 1])
 
   return (
     <div
@@ -495,7 +608,10 @@ export function GanttPage() {
           <div>
             <h2 className="text-xl font-semibold">Diagramme de Gantt</h2>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {tasks.length} tâche{tasks.length !== 1 ? 's' : ''}
+              {visibleTasks.length} tâche{visibleTasks.length !== 1 ? 's' : ''}
+              {hiddenCount > 0 && (
+                <> · {hiddenCount} masquée{hiddenCount !== 1 ? 's' : ''} avant cette date</>
+              )}
             </p>
           </div>
 
@@ -513,6 +629,27 @@ export function GanttPage() {
                 <SelectContent>
                   {SORT_OPTIONS.map(opt => (
                     <SelectItem key={opt.value} value={opt.value} className="text-xs">{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Start month */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground whitespace-nowrap">À partir de</span>
+              <Select
+                value={startMonth}
+                onValueChange={v => { setStartMonth(v); localStorage.setItem('pm_gantt_start_month', v) }}
+              >
+                <SelectTrigger className="h-8 w-[148px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  <SelectItem value="all" className="text-xs">Tout l'historique</SelectItem>
+                  {monthOptions.map(opt => (
+                    <SelectItem key={opt.value} value={opt.value} className="text-xs capitalize">
+                      {opt.label}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -797,9 +934,11 @@ export function GanttPage() {
           </div>
 
           {/* Empty state */}
-          {tasks.length === 0 && (
+          {sortedTasks.length === 0 && (
             <div className="flex items-center justify-center text-muted-foreground text-sm py-16">
-              Aucune tâche — créez-en depuis le Kanban.
+              {tasks.length === 0
+                ? 'Aucune tâche — créez-en depuis le Kanban.'
+                : 'Aucune tâche à partir de ce mois — choisissez une date plus ancienne.'}
             </div>
           )}
 
@@ -812,6 +951,12 @@ export function GanttPage() {
             const effectiveCompletedAt  = effectiveCompletedStr ? parseISO(effectiveCompletedStr) : null
             const effectiveStartedAtStr = pendingStartedAt[task.id] ?? task.started_at
             const actualStart           = effectiveStartedAtStr ? parseISO(effectiveStartedAtStr) : createdAt
+
+            // Barres commencées avant le mois choisi : coupées au bord gauche.
+            const plannedBarStart   = clampToRange(createdAt)
+            const actualBarStart    = clampToRange(actualStart)
+            const plannedIsClipped  = isClipped(createdAt)
+            const actualIsClipped   = isClipped(actualStart)
 
             const showPlanned = showPlannedBars && effectiveDueDate !== null
             const showActual  = task.status === 'done' || task.status === 'in_progress'
@@ -877,22 +1022,11 @@ export function GanttPage() {
                   </div>
                 </div>
 
-                {/* Timeline */}
-                <div className="relative shrink-0" style={{ width: totalWidth, height: ROW_HEIGHT }}>
-                  {/* Background grid: weekend shading + vertical lines */}
-                  {visibleDays.map((d, i) => {
-                    const weekend = !hideWeekends && isDayWeekend(d)
-                    return (
-                      <div
-                        key={i}
-                        className={`absolute top-0 bottom-0 border-l ${
-                          isToday(d) ? 'border-blue-200' : 'border-border/25'
-                        } ${weekend ? 'bg-slate-100/60' : ''}`}
-                        style={{ left: i * pxPerDay, width: pxPerDay }}
-                      />
-                    )
-                  })}
-
+                {/* Timeline — grille de fond en CSS (voir rowGridStyle) */}
+                <div
+                  className="relative shrink-0"
+                  style={{ width: totalWidth, height: ROW_HEIGHT, ...rowGridStyle }}
+                >
                   {/* Absence overlays */}
                   {absenceOverlays.map(o => (
                     <div
@@ -903,18 +1037,20 @@ export function GanttPage() {
                   ))}
 
                   {/* Today marker */}
-                  <div
-                    className="absolute top-0 bottom-0 w-px bg-blue-400 z-10 pointer-events-none"
-                    style={{ left: todayX }}
-                  />
+                  {showTodayMarker && (
+                    <div
+                      className="absolute top-0 bottom-0 w-px bg-blue-400 z-10 pointer-events-none"
+                      style={{ left: todayX }}
+                    />
+                  )}
 
                   {/* Planned bar */}
                   {showPlanned && (
                     <div
-                      className="absolute rounded group select-none"
+                      className={`absolute group select-none ${plannedIsClipped ? 'rounded-r' : 'rounded'}`}
                       style={{
-                        left:            xForDate(createdAt),
-                        width:           widthBetween(createdAt, effectiveDueDate!),
+                        left:            xForDate(plannedBarStart),
+                        width:           widthBetween(plannedBarStart, effectiveDueDate!),
                         top:             showBoth ? 13 : 26,
                         height:          20,
                         backgroundColor: dragState?.taskId === task.id ? '#60a5fa' : '#93c5fd',
@@ -940,10 +1076,10 @@ export function GanttPage() {
                   {/* Actual bar */}
                   {showActual && (
                     <div
-                      className={`absolute rounded select-none ${actualBarColor} ${editMode ? 'group' : ''}`}
+                      className={`absolute select-none ${actualIsClipped ? 'rounded-r' : 'rounded'} ${actualBarColor} ${editMode ? 'group' : ''}`}
                       style={{
-                        left:   xForDate(actualStart),
-                        width:  widthBetween(actualStart, actualEnd),
+                        left:   xForDate(actualBarStart),
+                        width:  widthBetween(actualBarStart, actualEnd),
                         top:    showBoth ? 39 : 26,
                         height: 20,
                         ...(!isDone ? {

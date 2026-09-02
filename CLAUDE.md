@@ -32,7 +32,7 @@ Le hook ouvre aussi un canal Realtime Supabase (`postgres_changes` sur `tasks`, 
 
 **`src/hooks/useProfiles.ts`** — liste des membres de l'espace (table `profiles` : `display_name`, `color`). Le store est **au niveau module** (`useSyncExternalStore`) et non par composant : plusieurs pages consultent les membres en même temps, une seule requête suffit. Expose `members`, `byId`, `updateProfile` (RLS : chacun ne modifie que le sien) et `refresh`.
 
-**`src/hooks/useSettings.ts`** — localStorage-only (key `pm_settings`). Only setting is `projectEndDate` used by the Burndown chart.
+**`src/hooks/useSettings.ts`** — localStorage-only (key `pm_settings`). Only setting is `projectEndDate`, lu par Burndown, Burn-up **et** Gantt (borne droite de l'axe + dernier mois du filtre « À partir de »). L'état est par composant : chaque page relit le localStorage à son montage, donc une modification dans Paramètres n'est visible qu'après changement de route (pas de partage d'état en direct entre deux pages montées).
 
 ### Comptes et partage
 
@@ -58,7 +58,11 @@ L'espace est **partagé entre les comptes connectés** : `tasks` et `absences` o
   - **Planned bar drag** (always active): drags right edge → updates `due_date` via `updateTask({ due_date })` only (no `status` passed, preventing `completed_at` from being overwritten).
   - **Actual bar drag** (edit mode only): drags right edge → updates `completed_at`.
   
-  Persists: zoom (`pm_gantt_zoom`), sort mode (`pm_gantt_sort`), manual order (`pm_gantt_order`), scroll position (`pm_gantt_scroll`). Scroll is restored via `requestAnimationFrame` after `loading` becomes false.
+  Persists: zoom (`pm_gantt_zoom`), sort mode (`pm_gantt_sort`), manual order (`pm_gantt_order`), scroll position (`pm_gantt_scroll`), mois de départ (`pm_gantt_start_month`). Scroll is restored via `requestAnimationFrame` after `loading` becomes false.
+
+  Filtre « À partir de » (`pm_gantt_start_month` : `all` | `yyyy-MM`) : `cutoff` devient le `rangeStart` de l'axe et `visibleTasks` écarte les tâches dont `taskEndDate()` (dernière des dates connues, plus aujourd'hui si la tâche n'est pas `done`) tombe avant ce mois. Le tri s'applique à **toutes** les tâches (`sortedAllTasks`) puis est filtré (`sortedTasks`) : `moveTask` cherche le voisin dans la liste visible mais permute dans l'ordre complet, sinon un filtre actif effacerait la position des tâches masquées. Les barres qui commencent avant le mois choisi sont ramenées à `rangeStart` (`clampToRange`) et perdent leur arrondi gauche ; le repère « aujourd'hui » disparaît si le mois choisi est dans le futur.
+
+  La plage est bornée à droite par `max(dates des tâches visibles, projectEndDate)` : l'axe peut donc couvrir plusieurs années. Pour cette raison la grille de fond d'une ligne n'est **pas** un div par jour mais deux `repeating-linear-gradient` (`rowGridStyle`) — traits verticaux tous les `pxPerDay`, et bande week-end de 2 jours sur 7 ancrée via `background-position` sur le premier samedi de la plage (le motif se répète aussi vers la gauche, donc un dimanche en tête est grisé correctement). Ne pas revenir à un div/jour : à N tâches × ~1200 jours la page devient injouable.
 
 **BurndownPage** (`/burndown`) — read-only Recharts line chart. Ideal line = linear from `totalTasks → 0` over project duration. Real line = tasks not yet done as of each day (uses `completed_at`).
 
@@ -89,6 +93,7 @@ L'espace est **partagé entre les comptes connectés** : `tasks` et `absences` o
 | `pm_gantt_sort` | `SortMode` string |
 | `pm_gantt_order` | `string[]` — manual task IDs |
 | `pm_gantt_zoom` | number (px/day, one of `[3,7,18,28,44,64,92]`) |
+| `pm_gantt_start_month` | `'all' \| 'yyyy-MM'` — début de l'axe temporel du Gantt |
 | `pm_gantt_scroll` | `{ left: number, top: number }` |
 | `pm_alternance_days` | `Record<'yyyy-MM-dd', DayType>` — miroir local de la table `alternance_days` |
 | `pm_alternance_brush` | `DayType` — pinceau sélectionné (`libre\|formation\|entreprise\|teletravail\|ferme`) |
