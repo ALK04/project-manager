@@ -77,6 +77,12 @@ L'espace est **partagé entre les comptes connectés** : `tasks` et `absences` o
 
 **SettingsPage** (`/settings`) — onglets Général (date de fin de projet), Équipe (profil perso : nom affiché + couleur d'avatar ; liste des membres et de leur charge), Absences, Importer Trello, Diagnostic. Trello import decodes card creation date from the first 8 hex chars of the Trello card ID.
 
+**NotificationBell** (`src/components/NotificationBell.tsx`, en haut de la Sidebar) — cloche calculée côté client à partir de `useTasks` (sa propre instance, donc temps réel inclus) : tâches non `done` dont `due_date` est passée (« En retard ») ou tombe aujourd'hui/demain (« Bientôt dues »). Pastille = nombre non lus ; ouvrir le popover marque tout comme lu (`pm_notifications_seen`, clés `id:due_date` — repousser l'échéance fait réapparaître la notif). « Aujourd'hui » est recalculé chaque minute.
+
+### Supabase keep-alive
+
+`.github/workflows/supabase-keepalive.yml` — `GET /rest/v1/tasks` tous les 3 jours (+ `workflow_dispatch`) pour éviter la mise en pause du plan gratuit après 7 jours d'inactivité. Secrets GitHub requis : `SUPABASE_URL`, `SUPABASE_ANON_KEY`. GitHub désactive les workflows planifiés d'un dépôt public sans commit depuis 60 jours.
+
 ### UI components
 
 `src/components/ui/` — shadcn-style components (Button, Badge, Dialog, Select, Input, Label) built on Radix UI primitives + `class-variance-authority`. `Badge` has variants matching `Priority` values (`must`, `should`, `could`, `wont`).
@@ -95,6 +101,7 @@ L'espace est **partagé entre les comptes connectés** : `tasks` et `absences` o
 | `pm_gantt_zoom` | number (px/day, one of `[3,7,18,28,44,64,92]`) |
 | `pm_gantt_start_month` | `'all' \| 'yyyy-MM'` — début de l'axe temporel du Gantt |
 | `pm_gantt_scroll` | `{ left: number, top: number }` |
+| `pm_notifications_seen` | `string[]` — clés `id:due_date` des notifications déjà vues |
 | `pm_alternance_days` | `Record<'yyyy-MM-dd', DayType>` — miroir local de la table `alternance_days` |
 | `pm_alternance_brush` | `DayType` — pinceau sélectionné (`libre\|formation\|entreprise\|teletravail\|ferme`) |
 

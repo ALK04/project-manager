@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
 import { useProfiles } from '@/hooks/useProfiles'
 import { UserAvatar } from '@/components/UserAvatar'
+import { NotificationBell } from '@/components/NotificationBell'
 
 const NAV_ITEMS = [
   { to: '/', icon: LayoutDashboard, label: 'Kanban' },
@@ -22,9 +23,12 @@ export function Sidebar() {
 
   return (
     <aside className="w-56 shrink-0 border-r border-border bg-white flex flex-col min-h-screen">
-      <div className="px-5 py-5 border-b border-border">
-        <h1 className="text-base font-semibold text-foreground tracking-tight">Project Manager</h1>
-        <p className="text-xs text-muted-foreground mt-0.5">Espace partagé</p>
+      <div className="px-5 py-5 border-b border-border flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="text-base font-semibold text-foreground tracking-tight">Project Manager</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">Espace partagé</p>
+        </div>
+        <NotificationBell />
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-1">

@@ -1,0 +1,39 @@
+# Garde le projet Supabase éveillé : le plan gratuit met en pause un projet
+# sans activité pendant 7 jours. Une requête REST tous les 3 jours suffit
+# (elle exécute une vraie requête Postgres, même si la RLS renvoie [] à anon).
+#
+# Secrets à définir dans GitHub → Settings → Secrets and variables → Actions :
+#   SUPABASE_URL       https://<ref>.supabase.co
+#   SUPABASE_ANON_KEY  clé publishable (sb_publishable_…)
+name: Supabase keep-alive
+
+on:
+  schedule:
+    - cron: '17 6 */3 * *' # tous les 3 jours à 06:17 UTC
+  workflow_dispatch: # bouton « Run workflow » pour tester à la main
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::Secrets SUPABASE_URL / SUPABASE_ANON_KEY manquants"
+            exit 1
+          fi
+          status=$(curl -sS -o /tmp/body.txt -w '%{http_code}' \
+            --retry 3 --retry-delay 10 \
+            "$SUPABASE_URL/rest/v1/tasks?select=id&limit=1" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY")
+          echo "HTTP $status"
+          if [ "$status" != "200" ]; then
+            cat /tmp/body.txt
+            echo "::error::Supabase a répondu $status"
+            exit 1
+          fi
