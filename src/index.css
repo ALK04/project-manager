@@ -20,6 +20,14 @@
   --color-card-foreground: hsl(224 71.4% 4.1%);
   --color-popover: hsl(0 0% 100%);
   --color-popover-foreground: hsl(224 71.4% 4.1%);
+  /* Identité de la vitrine : bleu nuit + vert feuille de chêne, fonds clairs. */
+  --color-navy: #1d3a5c;
+  --color-navy-dark: #142a44;
+  --color-navy-soft: #e9eef5;
+  --color-oak: #5b7b35;
+  --color-oak-dark: #48632a;
+  --color-oak-soft: #eaf0e1;
+  --color-paper: #f8f9f5;
   --radius-lg: 0.5rem;
   --radius-md: calc(0.5rem - 2px);
   --radius-sm: calc(0.5rem - 4px);

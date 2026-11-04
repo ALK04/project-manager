@@ -19,7 +19,9 @@ Single-page React app (React 19 + TypeScript + Tailwind CSS v4 + Vite). Backend 
 
 ### Routing
 
-`App.tsx` wraps everything in a fixed `flex h-screen` layout: `<Sidebar />` (w-56, fixed) + `<main>` (flex-1). Routes: `/` Kanban, `/burndown` Burndown, `/burnup` Burn-up, `/gantt` Gantt, `/alternance` Calendrier d'alternance, `/settings` Settings.
+Visiteur non connecté → `LandingPage` (vitrine, hors `BrowserRouter`) : navbar avec bouton « Se connecter » qui ouvre une pop-up Radix contenant `LoginForm` ; la connexion déclenche `onAuthStateChange` et `App` bascule seul vers l'application. Identité visuelle de la vitrine : tokens `navy*` / `oak*` / `paper` dans `index.css` (bleu nuit + vert feuille de chêne, pas de dégradé hors fond de page, pas d'emoji). Les captures `public/landing/*.jpg` sont générées sur des **données de démo** (Playwright + interception des requêtes Supabase, session factice dans le localStorage), jamais sur la vraie base ; `kanban.jpg` est plein écran (hero), les autres sont recadrées sans la sidebar (x = 224 px) et leurs dimensions sont reportées dans `FEATURES` de `LandingPage.tsx`.
+
+Une fois connecté, `App.tsx` wraps everything in a fixed `flex h-screen` layout: `<Sidebar />` (w-56, fixed) + `<main>` (flex-1). Routes: `/` Kanban, `/burndown` Burndown, `/burnup` Burn-up, `/gantt` Gantt, `/alternance` Calendrier d'alternance, `/settings` Settings.
 
 ### Data layer
 

@@ -6,7 +6,7 @@ import { BurnupPage } from '@/pages/BurnupPage'
 import { GanttPage } from '@/pages/GanttPage'
 import { AlternancePage } from '@/pages/AlternancePage'
 import { SettingsPage } from '@/pages/SettingsPage'
-import { LoginPage } from '@/pages/LoginPage'
+import { LandingPage } from '@/pages/LandingPage'
 import { useAuth } from '@/hooks/useAuth'
 
 function App() {
@@ -20,7 +20,7 @@ function App() {
     )
   }
 
-  if (!user) return <LoginPage />
+  if (!user) return <LandingPage />
 
   return (
     <BrowserRouter>
